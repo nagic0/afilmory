@@ -1,9 +1,8 @@
-import path from 'node:path'
 import process from 'node:process'
 
 import type { AfilmoryManifest, CameraInfo, LensInfo, PhotoManifestItem, ProcessPhotoResult } from '@afilmory/typing'
 
-import { thumbnailExists } from '../image/thumbnail.js'
+import { getThumbnailRuntime, sourceRevision, thumbnailIsCurrent } from '../image/thumbnail-cache.js'
 import { logger } from '../logger/index.js'
 import { handleDeletedPhotos, loadExistingManifest, needsUpdate, saveManifest } from '../manifest/manager.js'
 import { CURRENT_MANIFEST_VERSION } from '../manifest/version.js'
@@ -84,6 +83,8 @@ export class AfilmoryBuilder {
 
   async buildManifest(options: BuilderOptions): Promise<BuilderResult> {
     try {
+      // Fail once, before scheduling photos, if an explicitly selected HDR codec is missing.
+      await getThumbnailRuntime(this.config.system.processing.thumbnails)
       if (!options.dryRun) {
         await this.ensurePluginsReady()
       }
@@ -215,6 +216,7 @@ export class AfilmoryBuilder {
       const xmpSettings = this.getConfig().system.processing.xmp ?? { keywords: true, regions: true }
 
       const processorOptions: PhotoProcessorOptions = {
+        dryRun: options.dryRun,
         isForceMode: options.isForceMode,
         isForceManifest: options.isForceManifest,
         isForceThumbnails: options.isForceThumbnails,
@@ -224,7 +226,7 @@ export class AfilmoryBuilder {
 
       const concurrency = options.concurrencyLimit ?? this.config.system.processing.defaultConcurrency
       const { useClusterMode } = this.config.system.observability.performance.worker
-      const shouldUseCluster = useClusterMode && tasksToProcess.length >= concurrency * 2
+      const shouldUseCluster = !options.dryRun && useClusterMode && tasksToProcess.length >= concurrency * 2
       const { progressListener } = options
 
       await this.emitPluginEvent(runState, 'beforeProcessTasks', {
@@ -448,6 +450,14 @@ export class AfilmoryBuilder {
         })
       }
 
+      if (
+        failedCount > 0
+        && this.config.system.processing.thumbnails?.mode
+        && this.config.system.processing.thumbnails.mode !== 'sdr'
+      ) {
+        throw new Error(`HDR thumbnail build failed for ${failedCount} photo(s); the manifest has not been published`)
+      }
+
       await this.emitPluginEvent(runState, 'afterProcessTasks', {
         options,
         tasks: tasksToProcess,
@@ -540,15 +550,15 @@ export class AfilmoryBuilder {
   private async loadExistingManifest(options: BuilderOptions): Promise<AfilmoryManifest> {
     return options.isForceMode || options.isForceManifest
       ? {
-        version: CURRENT_MANIFEST_VERSION,
-        data: [],
-        cameras: [],
-        lenses: [],
-      }
+          version: CURRENT_MANIFEST_VERSION,
+          data: [],
+          cameras: [],
+          lenses: [],
+        }
       : await loadExistingManifest({
-        allowWrite: !options.dryRun,
-        allowMigrate: !options.dryRun,
-      })
+          allowWrite: !options.dryRun,
+          allowMigrate: !options.dryRun,
+        })
   }
 
   private async detectLivePhotos(
@@ -767,7 +777,6 @@ export class AfilmoryBuilder {
 
     for (const obj of imageObjects) {
       const { key } = obj
-      const photoId = path.basename(key, path.extname(key))
       const existingItem = existingManifestMap.get(key)
 
       // 新图片需要处理
@@ -791,7 +800,7 @@ export class AfilmoryBuilder {
 
       const needsXmpBackfill
         = !Array.isArray((existingItem as Partial<PhotoManifestItem>).keywords)
-        || !Array.isArray((existingItem as Partial<PhotoManifestItem>).regions)
+          || !Array.isArray((existingItem as Partial<PhotoManifestItem>).regions)
 
       if (needsXmpBackfill) {
         tasksToProcess.push(obj)
@@ -799,7 +808,11 @@ export class AfilmoryBuilder {
       }
 
       // 检查缩略图是否存在，如果不存在或强制刷新缩略图则需要处理
-      const hasThumbnail = await thumbnailExists(photoId)
+      const hasThumbnail = await thumbnailIsCurrent(
+        existingItem,
+        this.config.system.processing.thumbnails,
+        sourceRevision(legacyObj),
+      )
       if (!hasThumbnail || options.isForceThumbnails) {
         tasksToProcess.push(obj)
         continue

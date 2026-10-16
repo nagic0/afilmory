@@ -57,11 +57,13 @@ export default function githubRepoSyncPlugin(options: GitHubRepoSyncPluginOption
             cwd: workdir,
             stdio: 'inherit',
           })`git clone ${repoUrl} assets-git`
-        } else {
+        }
+        else {
           logger.main.info('🔄 拉取远程仓库更新...')
           try {
             await $({ cwd: assetsGitDir, stdio: 'inherit' })`git pull --rebase`
-          } catch {
+          }
+          catch {
             logger.main.warn('⚠️ git pull 失败，尝试重新克隆远程仓库...')
             logger.main.info('🗑️ 删除现有仓库目录...')
             await $({ cwd: workdir, stdio: 'inherit' })`rm -rf assets-git`
@@ -114,6 +116,18 @@ interface PrepareRepositoryLayoutOptions {
 async function prepareRepositoryLayout({ assetsGitDir, logger }: PrepareRepositoryLayoutOptions): Promise<void> {
   const thumbnailsSourceDir = path.resolve(assetsGitDir, 'thumbnails')
   const manifestSourcePath = path.resolve(assetsGitDir, 'photos-manifest.json')
+  // Variants are build cache, not public website assets. Keep them across CI
+  // checkouts so a mode switch can reuse earlier encodings.
+  const cacheSourceDir = path.resolve(assetsGitDir, 'thumbnail-cache')
+  const cacheDir = path.resolve(workdir, '.cache/thumbnails')
+  await fs.mkdir(cacheSourceDir, { recursive: true })
+  await fs.mkdir(path.dirname(cacheDir), { recursive: true })
+  const cacheStat = await fs.lstat(cacheDir).catch(() => null)
+  if (cacheStat && !cacheStat.isSymbolicLink()) {
+    await fs.cp(cacheDir, cacheSourceDir, { recursive: true, force: false })
+  }
+  await fs.rm(cacheDir, { recursive: true, force: true })
+  await fs.symlink(cacheSourceDir, cacheDir, 'dir')
 
   if (!existsSync(thumbnailsSourceDir)) {
     logger.main.info('📁 创建 thumbnails 目录...')
@@ -206,7 +220,8 @@ async function pushUpdatesToRemoteRepo({
 async function ensureGitUserConfigured(assetsGitDir: string): Promise<void> {
   try {
     await $({ cwd: assetsGitDir, stdio: 'pipe' })`git config user.name`
-  } catch {
+  }
+  catch {
     await $({
       cwd: assetsGitDir,
       stdio: 'pipe',
@@ -260,7 +275,8 @@ async function getCurrentBranch(assetsGitDir: string): Promise<string | null> {
       return null
     }
     return branch
-  } catch {
+  }
+  catch {
     return null
   }
 }
@@ -269,7 +285,8 @@ async function branchExistsLocally(assetsGitDir: string, branchName: string): Pr
   try {
     await $({ cwd: assetsGitDir, stdio: 'pipe' })`git show-ref --verify --quiet refs/heads/${branchName}`
     return true
-  } catch {
+  }
+  catch {
     return false
   }
 }
@@ -278,13 +295,16 @@ async function remoteBranchExists(assetsGitDir: string, branchName: string): Pro
   try {
     await $({ cwd: assetsGitDir, stdio: 'pipe' })`git rev-parse --verify origin/${branchName}`
     return true
-  } catch {
+  }
+  catch {
     return false
   }
 }
 
 function buildAuthenticatedRepoUrl(url: string, token?: string): string {
-  if (!token) return url
+  if (!token) {
+    return url
+  }
 
   if (url.startsWith('https://github.com/')) {
     const urlWithoutProtocol = url.replace('https://', '')

@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.16)
+project(afilmory_hdr_thumbnail LANGUAGES CXX)
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(AVIF REQUIRED IMPORTED_TARGET libavif>=1.4.1)
+pkg_check_modules(UHDR REQUIRED IMPORTED_TARGET libuhdr>=1.4.0)
+
+add_executable(afilmory-hdr-thumbnail thumbnail.cpp)
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/thumbnail.cpp" CODEC_REVISION)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/thumbnail.cpp")
+target_compile_definitions(afilmory-hdr-thumbnail PRIVATE CODEC_REVISION="${CODEC_REVISION}")
+target_compile_features(afilmory-hdr-thumbnail PRIVATE cxx_std_17)
+target_compile_options(afilmory-hdr-thumbnail PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(afilmory-hdr-thumbnail PRIVATE PkgConfig::AVIF PkgConfig::UHDR)
+install(TARGETS afilmory-hdr-thumbnail RUNTIME DESTINATION bin)

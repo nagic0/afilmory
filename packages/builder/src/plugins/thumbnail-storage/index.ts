@@ -2,12 +2,7 @@ import { StorageManager } from '../../storage/index.js'
 import type { S3CompatibleConfig, StorageConfig } from '../../storage/interfaces.js'
 import type { BuilderPlugin } from '../types.js'
 import type { ThumbnailPluginData } from './shared.js'
-import {
-  DEFAULT_CONTENT_TYPE,
-  DEFAULT_DIRECTORY,
-  THUMBNAIL_PLUGIN_DATA_KEY,
-  THUMBNAIL_PLUGIN_SYMBOL,
-} from './shared.js'
+import { DEFAULT_DIRECTORY, THUMBNAIL_PLUGIN_DATA_KEY, THUMBNAIL_PLUGIN_SYMBOL } from './shared.js'
 
 const PLUGIN_NAME = 'afilmory:thumbnail-storage'
 const RUN_STATE_KEY = 'state'
@@ -23,7 +18,7 @@ interface ThumbnailStoragePluginOptions {
 interface ResolvedPluginConfig {
   directory: string
   remotePrefix: string
-  contentType: string
+  contentType?: string
   useDefaultStorage: boolean
   storageConfig: UploadableStorageConfig | null
   enabled: boolean
@@ -41,15 +36,17 @@ function normalizeDirectory(directory: string | undefined): string {
 }
 
 function trimSlashes(value: string | undefined | null): string | null {
-  if (!value) return null
+  if (!value) {
+    return null
+  }
   const normalized = value.replaceAll('\\', '/').replaceAll(/^\/+|\/+$/g, '')
   return normalized.length > 0 ? normalized : null
 }
 
 function joinSegments(...segments: Array<string | null | undefined>): string {
   const filtered = segments
-    .map((segment) => (segment ?? '').replaceAll('\\', '/').replaceAll(/^\/+|\/+$/g, ''))
-    .filter((segment) => segment.length > 0)
+    .map(segment => (segment ?? '').replaceAll('\\', '/').replaceAll(/^\/+|\/+$/g, ''))
+    .filter(segment => segment.length > 0)
   return filtered.join('/')
 }
 
@@ -97,7 +94,7 @@ export default function thumbnailStoragePlugin(options: ThumbnailStoragePluginOp
         const fallbackStorage = config.user?.storage ?? builder.getStorageConfig()
         const storageConfig = (options.storageConfig ?? fallbackStorage) as StorageConfig
         const directory = normalizeDirectory(options.directory)
-        const contentType = options.contentType ?? DEFAULT_CONTENT_TYPE
+        const contentType = options.contentType
 
         if (storageConfig.provider === 'eagle') {
           logger.thumbnail.warn('缩略图上传插件不支持 Eagle 存储提供商，已自动禁用。')
@@ -127,7 +124,8 @@ export default function thumbnailStoragePlugin(options: ThumbnailStoragePluginOp
 
         if (!options.storageConfig) {
           builder.getStorageManager().addExcludePrefix(remotePrefix)
-        } else {
+        }
+        else {
           externalStorageManager = new StorageManager(uploadableConfig)
         }
       },
@@ -160,10 +158,11 @@ export default function thumbnailStoragePlugin(options: ThumbnailStoragePluginOp
         if (!state.uploaded.has(remoteKey)) {
           try {
             await storageManager.uploadFile(remoteKey, data.buffer, {
-              contentType: resolved.contentType,
+              contentType: resolved.contentType ?? (data.fileName.endsWith('.avif') ? 'image/avif' : 'image/jpeg'),
             })
             state.uploaded.add(remoteKey)
-          } catch (error) {
+          }
+          catch (error) {
             logger.thumbnail.error(`上传缩略图失败：${remoteKey}`, error)
             return
           }
@@ -174,7 +173,8 @@ export default function thumbnailStoragePlugin(options: ThumbnailStoragePluginOp
           try {
             remoteUrl = await storageManager.generatePublicUrl(remoteKey)
             state.urlCache.set(remoteKey, remoteUrl)
-          } catch (error) {
+          }
+          catch (error) {
             logger.thumbnail.error(`生成缩略图 URL 失败：${remoteKey}`, error)
             return
           }

@@ -20,7 +20,19 @@ export interface XmpProcessingSettings {
   regions: boolean
 }
 
+export interface ThumbnailSettings {
+  mode: 'sdr' | 'jpeg-gainmap' | 'avif-gainmap'
+  width: number
+  /** Defaults to 100 for SDR, 90 for JPEG gain maps, and 85 for AVIF gain maps. */
+  quality?: number
+  gainMapQuality: number
+  onUnsupported: 'sdr' | 'error'
+  /** Optional native codec executable, required only for gain-map modes. */
+  encoderPath: string
+}
+
 export interface SystemProcessingSettings {
+  thumbnails?: ThumbnailSettings
   defaultConcurrency: number
   enableLivePhotoDetection: boolean
   xmp?: XmpProcessingSettings
@@ -62,8 +74,8 @@ export interface BuilderConfig {
 
 type DeepPartial<T> = T extends object
   ? {
-    [P in keyof T]?: DeepPartial<T[P]>
-  }
+      [P in keyof T]?: DeepPartial<T[P]>
+    }
   : T
 
 export type BuilderConfigInput = {

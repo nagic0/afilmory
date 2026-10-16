@@ -84,5 +84,7 @@ scripts/generate-app-store-composites.mjs
 tmp-asc/
 acceptance-report/
 /metadata/
+**/.cache/thumbnails/
+.local/
 apps/mobile/metadata/
 apps/mobile/fastlane/metadata/
