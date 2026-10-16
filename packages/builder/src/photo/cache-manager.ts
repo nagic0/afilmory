@@ -1,6 +1,9 @@
+import type { Buffer } from 'node:buffer'
+
 import type { PhotoManifestItem } from '@afilmory/typing'
 
-import { thumbnailExists } from '../image/thumbnail.js'
+import { sourceRevision, thumbnailIsCurrent } from '../image/thumbnail-cache.js'
+import type { ThumbnailSettings } from '../types/config.js'
 import type { PhotoProcessorOptions } from './processor.js'
 
 export interface CacheableData {
@@ -9,8 +12,8 @@ export interface CacheableData {
     thumbnailBuffer: Buffer
     blurhash: string
   }
-  exif?: any
-  toneAnalysis?: any
+  exif?: PhotoManifestItem['exif']
+  toneAnalysis?: PhotoManifestItem['toneAnalysis']
 }
 
 /**
@@ -18,11 +21,11 @@ export interface CacheableData {
  * 考虑文件更新状态和缓存存在性
  */
 export async function shouldProcessPhoto(
-  photoId: string,
   existingItem: PhotoManifestItem | undefined,
-  obj: { LastModified?: Date; ETag?: string },
+  obj: { LastModified?: Date, ETag?: string, Size?: number },
   options: PhotoProcessorOptions,
-): Promise<{ shouldProcess: boolean; reason: string }> {
+  settings?: ThumbnailSettings,
+): Promise<{ shouldProcess: boolean, reason: string }> {
   // 强制模式下总是处理
   if (options.isForceMode) {
     return { shouldProcess: true, reason: '强制模式' }
@@ -34,7 +37,8 @@ export async function shouldProcessPhoto(
   }
 
   // 检查文件是否更新
-  const fileNeedsUpdate = existingItem.lastModified !== obj.LastModified?.toISOString()
+  const revision = sourceRevision(obj)
+  const fileNeedsUpdate = !revision || existingItem.thumbnailCache?.sourceRevision !== revision
 
   if (fileNeedsUpdate || options.isForceManifest) {
     return {
@@ -43,9 +47,9 @@ export async function shouldProcessPhoto(
     }
   }
 
-  const needsXmpBackfill =
-    (options.xmpKeywordsEnabled && !Array.isArray((existingItem as Partial<PhotoManifestItem>).keywords)) ||
-    (options.xmpRegionsEnabled && !Array.isArray((existingItem as Partial<PhotoManifestItem>).regions))
+  const needsXmpBackfill
+    = (options.xmpKeywordsEnabled && !Array.isArray((existingItem as Partial<PhotoManifestItem>).keywords))
+      || (options.xmpRegionsEnabled && !Array.isArray((existingItem as Partial<PhotoManifestItem>).regions))
 
   if (needsXmpBackfill) {
     return {
@@ -55,7 +59,7 @@ export async function shouldProcessPhoto(
   }
 
   // 检查缩略图是否存在
-  const hasThumbnail = await thumbnailExists(photoId)
+  const hasThumbnail = await thumbnailIsCurrent(existingItem, settings, revision)
   if (!hasThumbnail || options.isForceThumbnails) {
     return {
       shouldProcess: true,

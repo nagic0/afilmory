@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6,6 +7,7 @@ import type { ExifInfo } from '@afilmory/og-renderer'
 import { renderOgImage } from '@afilmory/og-renderer'
 import type { PhotoManifestItem } from '@afilmory/typing'
 import type { SatoriOptions } from 'satori'
+import sharp from 'sharp'
 
 import type { Logger } from '../../logger/index.js'
 import { workdir } from '../../path.js'
@@ -72,20 +74,24 @@ function normalizeDirectory(directory: string | undefined): string {
 }
 
 function trimSlashes(value: string | undefined | null): string | null {
-  if (!value) return null
+  if (!value) {
+    return null
+  }
   const normalized = value.replaceAll('\\', '/').replaceAll(/^\/+|\/+$/g, '')
   return normalized.length > 0 ? normalized : null
 }
 
 function joinSegments(...segments: Array<string | null | undefined>): string {
   const filtered = segments
-    .map((segment) => (segment ?? '').replaceAll('\\', '/').replaceAll(/^\/+|\/+$/g, ''))
-    .filter((segment) => segment.length > 0)
+    .map(segment => (segment ?? '').replaceAll('\\', '/').replaceAll(/^\/+|\/+$/g, ''))
+    .filter(segment => segment.length > 0)
   return filtered.join('/')
 }
 
 function resolveSiteConfigPath(siteConfigPath: string | undefined): string {
-  if (!siteConfigPath) return path.resolve(repoRoot, 'config.json')
+  if (!siteConfigPath) {
+    return path.resolve(repoRoot, 'config.json')
+  }
   return path.isAbsolute(siteConfigPath) ? siteConfigPath : path.resolve(repoRoot, siteConfigPath)
 }
 
@@ -177,13 +183,14 @@ async function loadSiteMeta(options: OgImagePluginOptions, logger: Logger): Prom
 
   try {
     const raw = await readFile(siteConfigPath, 'utf8')
-    const parsed = JSON.parse(raw) as Partial<{ name: string; title: string; accentColor: string }>
+    const parsed = JSON.parse(raw) as Partial<{ name: string, title: string, accentColor: string }>
 
     return {
       siteName: parsed.name?.trim() || parsed.title?.trim() || fallback.siteName,
       accentColor: parsed.accentColor?.trim() || fallback.accentColor,
     }
-  } catch (error) {
+  }
+  catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     logger.main.info(`OG image plugin: using fallback site meta (${siteConfigPath} not readable: ${message}).`)
     return fallback
@@ -195,13 +202,6 @@ function bufferToDataUrl(buffer: Buffer, contentType: string): string {
   return `data:${contentType};base64,${base64}`
 }
 
-function guessContentType(thumbnailUrl: string): string {
-  const lowered = thumbnailUrl.toLowerCase()
-  if (lowered.endsWith('.png')) return 'image/png'
-  if (lowered.endsWith('.webp')) return 'image/webp'
-  return 'image/jpeg'
-}
-
 async function resolveThumbnailDataUrl(
   item: PhotoManifestItem,
   pluginData: ThumbnailPluginData | undefined,
@@ -209,22 +209,25 @@ async function resolveThumbnailDataUrl(
 ): Promise<string | null> {
   // Prefer the in-memory thumbnail to avoid extra reads; fall back to URLs when needed.
   if (pluginData?.buffer) {
-    return bufferToDataUrl(pluginData.buffer, 'image/jpeg')
+    // OG renderers need a conventional SDR raster even when gallery thumbnails
+    // are AVIF or JPEG gain maps. Normal Sharp decoding reads the SDR base.
+    return bufferToDataUrl(await sharp(pluginData.buffer).jpeg().toBuffer(), 'image/jpeg')
   }
 
   const thumbnailUrl = pluginData?.localUrl || item.thumbnailUrl
-  if (!thumbnailUrl) return null
-
-  const contentType = guessContentType(thumbnailUrl)
+  if (!thumbnailUrl) {
+    return null
+  }
 
   if (/^https?:\/\//i.test(thumbnailUrl)) {
     try {
       const response = await fetch(thumbnailUrl)
       if (response.ok) {
         const arrayBuffer = await response.arrayBuffer()
-        return bufferToDataUrl(Buffer.from(arrayBuffer), response.headers.get('content-type') ?? contentType)
+        return bufferToDataUrl(await sharp(Buffer.from(arrayBuffer)).jpeg().toBuffer(), 'image/jpeg')
       }
-    } catch (error) {
+    }
+    catch (error) {
       logger.thumbnail?.warn?.(`OG image plugin: failed to fetch remote thumbnail ${thumbnailUrl}`, error)
     }
   }
@@ -234,8 +237,9 @@ async function resolveThumbnailDataUrl(
 
   try {
     const localBuffer = await readFile(localPath)
-    return bufferToDataUrl(localBuffer, contentType)
-  } catch (error) {
+    return bufferToDataUrl(await sharp(localBuffer).jpeg().toBuffer(), 'image/jpeg')
+  }
+  catch (error) {
     logger.thumbnail?.debug?.(`OG image plugin: could not read local thumbnail ${localPath}`, error)
     return null
   }
@@ -271,8 +275,8 @@ function buildExifInfo(photo: PhotoManifestItem): ExifInfo | null {
   const aperture = exif.FNumber ? `f/${exif.FNumber}` : null
   const iso = exif.ISO ?? null
   const shutterSpeed = exif.ExposureTime ? `${exif.ExposureTime}s` : null
-  const camera =
-    exif.Make && exif.Model ? `${exif.Make.trim()} ${exif.Model.trim()}`.trim() : (exif.Model ?? exif.Make ?? null)
+  const camera
+    = exif.Make && exif.Model ? `${exif.Make.trim()} ${exif.Model.trim()}`.trim() : (exif.Model ?? exif.Make ?? null)
 
   if (!focalLength && !aperture && !iso && !shutterSpeed && !camera) {
     return null
@@ -328,7 +332,8 @@ export default function ogImagePlugin(options: OgImagePluginOptions = {}): Build
         if (options.vendor && !vendor) {
           try {
             vendor = createVendor(options.vendor)
-          } catch (error) {
+          }
+          catch (error) {
             logger.main.error('OG image plugin: failed to initialize vendor config.', error)
             throw error
           }
@@ -376,7 +381,8 @@ export default function ogImagePlugin(options: OgImagePluginOptions = {}): Build
 
         if (!options.storageConfig) {
           builder.getStorageManager().addExcludePrefix(remotePrefix)
-        } else {
+        }
+        else {
           externalStorageManager = new StorageManager(uploadableConfig)
         }
       },
@@ -420,7 +426,8 @@ export default function ogImagePlugin(options: OgImagePluginOptions = {}): Build
             const remoteUrl = await storageManager.generatePublicUrl(remoteKey)
             state.urlCache.set(remoteKey, remoteUrl)
             item.ogImageUrl = remoteUrl
-          } catch (error) {
+          }
+          catch (error) {
             logger.main.info(`OG image plugin: skipped rendering and could not resolve URL for ${remoteKey}.`, error)
           }
           return
@@ -448,16 +455,17 @@ export default function ogImagePlugin(options: OgImagePluginOptions = {}): Build
 
           const stateForUpload = state
           if (
-            !stateForUpload.uploaded.has(remoteKey) ||
-            payload.options.isForceMode ||
-            payload.options.isForceManifest
+            !stateForUpload.uploaded.has(remoteKey)
+            || payload.options.isForceMode
+            || payload.options.isForceManifest
           ) {
             try {
               await storageManager.uploadFile(remoteKey, Buffer.from(png), {
                 contentType: resolved.contentType,
               })
               stateForUpload.uploaded.add(remoteKey)
-            } catch (error) {
+            }
+            catch (error) {
               logger.main.error(`OG image plugin: failed to upload ${remoteKey}`, error)
               return
             }
@@ -468,23 +476,28 @@ export default function ogImagePlugin(options: OgImagePluginOptions = {}): Build
             try {
               remoteUrl = await storageManager.generatePublicUrl(remoteKey)
               stateForUpload.urlCache.set(remoteKey, remoteUrl)
-            } catch (error) {
+            }
+            catch (error) {
               logger.main.error(`OG image plugin: failed to generate URL for ${remoteKey}`, error)
               return
             }
           }
 
           item.ogImageUrl = remoteUrl
-        } catch (error) {
+        }
+        catch (error) {
           logger.main.error(`OG image plugin: failed to render OG image for ${item.id}`, error)
         }
       },
       afterBuild: async ({ logger }) => {
-        if (!vendor) return
+        if (!vendor) {
+          return
+        }
 
         try {
           await vendor.build({ repoRoot, logger })
-        } catch (error) {
+        }
+        catch (error) {
           logger.main.error('OG image plugin: vendor build step failed.', error)
         }
       },

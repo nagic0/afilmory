@@ -15,6 +15,8 @@ import {
   isBitmap,
   preprocessImageBuffer,
 } from '../image/processor.js'
+import { restoreThumbnail } from '../image/thumbnail.js'
+import { sourceRevision } from '../image/thumbnail-cache.js'
 import type { PluginRunState } from '../plugins/manager.js'
 import { THUMBNAIL_PLUGIN_DATA_KEY } from '../plugins/thumbnail-storage/shared.js'
 import type { S3ObjectLike } from '../types/s3.js'
@@ -164,12 +166,54 @@ export async function executePhotoProcessingPipeline(
   context: PhotoProcessingContext,
 ): Promise<PhotoManifestItem | null> {
   const { photoKey, obj, existingItem, livePhotoMap, options } = context
-  const { storageManager } = getPhotoExecutionContext()
+  const { storageManager, builder } = getPhotoExecutionContext()
   const loggers = getGlobalLoggers()
   // Generate the actual photo ID with digest suffix
   const photoId = await generatePhotoId(photoKey)
 
   try {
+    const revision = sourceRevision(obj)
+    // A configuration switch can select a previously encoded variant without
+    // downloading the original or re-running EXIF, motion-photo and tone analysis.
+    if (
+      existingItem?.thumbnailCache
+      && revision
+      && revision === existingItem.thumbnailCache.sourceRevision
+      && !options.isForceMode
+      && !options.isForceThumbnails
+      && !options.isForceManifest
+      && (!options.xmpKeywordsEnabled || Array.isArray(existingItem.keywords))
+      && (!options.xmpRegionsEnabled || Array.isArray(existingItem.regions))
+    ) {
+      const cached = await restoreThumbnail(
+        existingItem.thumbnailCache.sourceDigest,
+        builder.getConfig().system.processing.thumbnails,
+        revision,
+        !options.dryRun,
+      )
+      if (cached) {
+        const livePhoto = await processLivePhoto(photoKey, livePhotoMap, storageManager)
+        context.pluginData[THUMBNAIL_PLUGIN_DATA_KEY] = {
+          photoId,
+          fileName: cached.cache.fileName,
+          buffer: cached.thumbnailBuffer,
+          localUrl: cached.thumbnailUrl,
+        }
+        return {
+          ...existingItem,
+          originalUrl: await storageManager.generatePublicUrl(photoKey),
+          video:
+            existingItem.video?.type === 'motion-photo'
+              ? existingItem.video
+              : livePhoto.isLivePhoto
+                ? { type: 'live-photo', videoUrl: livePhoto.livePhotoVideoUrl!, s3Key: livePhoto.livePhotoVideoS3Key! }
+                : undefined,
+          thumbnailUrl: cached.thumbnailUrl,
+          thumbnailCache: cached.cache,
+          thumbHash: cached.thumbHash ? compressUint8Array(cached.thumbHash) : null,
+        }
+      }
+    }
     // 1. 预处理图片
     const imageData = await preprocessImage(photoKey)
     if (!imageData) {
@@ -186,17 +230,19 @@ export async function executePhotoProcessingPipeline(
     const contentDigest = crypto.createHash('sha256').update(imageBuffer).digest('hex')
 
     // 3. 处理缩略图和 blurhash
-    const thumbnailResult = await processThumbnailAndBlurhash(imageBuffer, photoId, existingItem, options)
+    const thumbnailResult = await processThumbnailAndBlurhash(imageBuffer, imageData.rawBuffer, revision, options)
 
     context.pluginData[THUMBNAIL_PLUGIN_DATA_KEY] = {
       photoId,
-      fileName: `${photoId}.jpg`,
+      fileName: thumbnailResult.cache.fileName,
       buffer: thumbnailResult.thumbnailBuffer,
       localUrl: thumbnailResult.thumbnailUrl,
     }
 
     // 4. 处理 EXIF 数据
-    const exifData = await processExifData(imageBuffer, imageData.rawBuffer, photoKey, existingItem, options)
+    const reusableItem
+      = revision && revision === existingItem?.thumbnailCache?.sourceRevision ? existingItem : undefined
+    const exifData = await processExifData(imageBuffer, imageData.rawBuffer, photoKey, reusableItem, options)
     const exiftoolXmpMetadata
       = options.xmpKeywordsEnabled || options.xmpRegionsEnabled
         ? extractXmpMetadataFromExif(exifData)
@@ -226,7 +272,7 @@ export async function executePhotoProcessingPipeline(
     }
 
     // 8. 处理影调分析
-    const toneAnalysis = await processToneAnalysis(sharpInstance, photoKey, existingItem, options)
+    const toneAnalysis = await processToneAnalysis(sharpInstance, photoKey, reusableItem, options)
 
     // 9. 提取照片信息
     const photoInfo = extractPhotoInfo(photoKey, exifData)
@@ -243,6 +289,7 @@ export async function executePhotoProcessingPipeline(
       tags: options.xmpKeywordsEnabled ? mergeUniqueTags(photoInfo.tags, xmpKeywords) : photoInfo.tags,
       originalUrl: await storageManager.generatePublicUrl(photoKey),
       thumbnailUrl: thumbnailResult.thumbnailUrl,
+      thumbnailCache: thumbnailResult.cache,
       thumbHash: thumbnailResult.thumbHash ? compressUint8Array(thumbnailResult.thumbHash) : null,
       width: metadata.width,
       height: metadata.height,
@@ -322,15 +369,18 @@ export async function processPhotoWithPipeline(
   const { builder } = getPhotoExecutionContext()
   const loggers = getGlobalLoggers()
 
-  const photoId = await generatePhotoId(photoKey)
-
   await builder.emitPluginEvent(runtime.runState, 'beforePhotoProcess', {
     options: runtime.builderOptions,
     context,
   })
 
   // 检查是否需要处理
-  const { shouldProcess, reason } = await shouldProcessPhoto(photoId, existingItem, obj, options)
+  const { shouldProcess, reason } = await shouldProcessPhoto(
+    existingItem,
+    obj,
+    options,
+    builder.getConfig().system.processing.thumbnails,
+  )
 
   if (!shouldProcess) {
     loggers.image.info(`⏭️ 跳过处理 (${reason}): ${photoKey}`)

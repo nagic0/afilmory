@@ -51,7 +51,9 @@ The builder uses `defineBuilderConfig` from `@afilmory/builder`. `builder.config
 
 ```ts
 import os from 'node:os'
+
 import { defineBuilderConfig, githubRepoSyncPlugin } from '@afilmory/builder'
+
 import { env } from './env.js'
 
 export default defineBuilderConfig(() => ({
@@ -96,6 +98,142 @@ Notes:
 
 - B2/GitHub storage are also supported (see comments in `builder.config.ts`).
 - Outputs land in `apps/web/public/thumbnails` and `apps/web/src/data/photos-manifest.json`.
+
+## HDR thumbnails (experimental)
+
+Thumbnail output is a **build-time** setting, independent of the large-image GPU
+viewer.
+The default remains an SDR JPEG.
+Gain-map modes use an SDR base and the
+browser's native image rendering; SDR sources remain SDR.
+Live Photo video is
+unchanged.
+AVIF mode requires an AVIF-capable browser; a browser that decodes AVIF
+but ignores its gain map displays the SDR base.
+There is no automatic JPEG
+fallback for browsers that cannot decode AVIF.
+
+```ts
+export default {
+  system: {
+    processing: {
+      defaultConcurrency: 2,
+      thumbnails: {
+        mode: 'avif-gainmap', // 'sdr' | 'jpeg-gainmap' | 'avif-gainmap'
+        width: 600,
+        quality: 85,
+        gainMapQuality: 95,
+        onUnsupported: 'sdr', // warning + SDR, or 'error' to reject the build
+        encoderPath: '/absolute/path/to/afilmory-hdr-thumbnail',
+      },
+    },
+    observability: {
+      performance: { worker: { workerConcurrency: 1, timeout: 150_000 } },
+    },
+  }
+}
+```
+
+Omitting `quality` selects 100 for SDR, 90 for JPEG gain maps, and 85 for AVIF
+gain maps.
+Quality scales are codec-specific.
+HDR decoding reconstructs full-size
+SDR and HDR renditions before resizing in linear light, so start with low
+concurrency, particularly with large camera images.
+Both gain-map modes use an
+even width/height (at most a one-pixel rounding difference) and do not upscale.
+AVIF output uses 10-bit YUV444 and an 8-bit, full-resolution RGB gain map.
+
+HDR modes require the optional native executable.
+Install a C++17 compiler,
+CMake, pkg-config, libavif (1.4.1 or newer) with an AV1 encoder/decoder, and
+libultrahdr (1.4.0 or newer).
+On macOS these libraries are available through
+Homebrew.
+Other systems may need to build the libraries from source.
+The normal
+SDR build needs none of these additional dependencies.
+
+```sh
+cmake -S packages/builder/native -B .local/hdr-native -DCMAKE_BUILD_TYPE=Release
+cmake --build .local/hdr-native --parallel 2
+# Set encoderPath to the resulting executable, or install it on PATH:
+cmake --install .local/hdr-native --prefix "$HOME/.local"
+```
+
+The native codec accepts JPEG gain maps and opaque AVIF gain maps with
+BT.709, Display P3 or BT.2020 colour information.
+AVIF ICC profiles,
+alpha, non-square pixels and animation are currently unsupported.
+Clean aperture,
+rotation and mirroring are applied to both renditions; JPEG EXIF orientation is
+also applied.
+Unsupported inputs produce a per-image warning and an SDR output,
+or a failure with `onUnsupported: 'error'`.
+A missing native executable, corrupt
+input or codec failure is an error, not an SDR fallback.
+HDR builds with failed
+photos stop before saving/publishing the manifest.
+Inputs without a safely
+recoverable SDR rendition (such as HDR-only AVIF, or an unsupported HDR primary)
+fail instead of falling back.
+No HDR is synthesized for SDR originals.
+Unsupported HDR source formats should be converted to a supported
+gain-map input before building.
+
+Incremental builds identify a thumbnail by the original bytes, normalized output
+settings and codec versions.
+Output filenames contain the encoded file's SHA-256.
+The builder checks source ETag/mtime/size before skipping an original download.
+Changing only the thumbnail mode or quality does not invalidate EXIF/tone data.
+
+| Change                               | Work performed                                                             |
+| ------------------------------------ | -------------------------------------------------------------------------- |
+| No source/config changes             | Reuse existing thumbnails                                                  |
+| Add/replace one source               | Generate that source's selected variant                                    |
+| First switch to another mode/quality | Generate missing variants for the current collection                       |
+| Switch back to a cached variant      | Restore it and update the manifest, without fetching originals or encoding |
+| Change width/encoder version         | Generate variants using the new recipe                                     |
+| Missing/corrupt cached file          | Regenerate the affected variant                                            |
+| `--force-thumbnails`                 | Re-encode the selected variant for every selected source                   |
+
+Variants and their indexes live in `apps/web/.cache/thumbnails`; only the current
+manifest's files live in `apps/web/public/thumbnails`.
+Preserve both directories
+and the manifest across CI runs. `githubRepoSyncPlugin` stores variant cache in
+`thumbnail-cache/` in its assets repository automatically.
+Without that plugin,
+restore the cache with CI caching, including a restore prefix that survives
+configuration changes.
+A cache miss is always safe, but costs another encoding.
+Existing installations using legacy photo-ID JPEG filenames rebuild thumbnails
+once to populate this cache; subsequent builds use the per-image recipes.
+Unused variants are retained for switching back; delete the private cache
+explicitly to reclaim space.
+It must not be published as website content.
+
+ThumbHash and OG images use the SDR base.
+CDN upload plugins infer MIME from the
+actual output extension.
+These settings do not change the original images or
+enable any large-image GPU functionality.
+
+Validation:
+
+```sh
+node --import tsx --test packages/builder/src/image/thumbnail.test.ts
+# Include native JPEG/AVIF round trips and independent reference decoders:
+AFILMORY_HDR_TEST_ENCODER="$PWD/.local/hdr-native/afilmory-hdr-thumbnail" \
+  node --import tsx --test packages/builder/src/image/thumbnail.test.ts
+```
+
+The native tests additionally require `ultrahdr_app` and `avifgainmaputil` on PATH.
+The small synthetic fixtures can be regenerated with
+`python3 packages/builder/native/generate-fixtures.py`.
+They contain four known
+SDR/HDR luminance bands and no photographs.
+Native tests are skipped explicitly
+when `AFILMORY_HDR_TEST_ENCODER` is unset.
 
 ## Site Presentation Config (`config.json`)
 

@@ -1,6 +1,9 @@
+import process from 'node:process'
+
 import { loadConfig } from 'c12'
 import consola from 'consola'
 
+import { resolveThumbnailSettings } from '../image/thumbnail-config.js'
 import type { StorageConfig } from '../storage/interfaces.js'
 import type { BuilderConfig, BuilderConfigInput, UserBuilderSettings } from '../types/config.js'
 import { clone } from '../utils/clone.js'
@@ -12,10 +15,18 @@ export interface LoadBuilderConfigOptions {
 }
 
 function applySystemOverrides(target: BuilderConfig['system'], overrides?: BuilderConfigInput['system']): void {
-  if (!overrides) return
+  if (!overrides) {
+    return
+  }
 
   if (overrides.processing) {
     const { processing } = overrides
+    if (processing.thumbnails) {
+      target.processing.thumbnails = resolveThumbnailSettings({
+        ...target.processing.thumbnails,
+        ...processing.thumbnails,
+      })
+    }
     if (typeof processing.defaultConcurrency === 'number') {
       target.processing.defaultConcurrency = processing.defaultConcurrency
     }
@@ -72,7 +83,9 @@ function ensureUserSettings(target: BuilderConfig): UserBuilderSettings {
 }
 
 function applyUserOverrides(target: BuilderConfig, overrides?: BuilderConfigInput['user']): void {
-  if (!overrides) return
+  if (!overrides) {
+    return
+  }
   const user = ensureUserSettings(target)
 
   if (overrides.storage !== undefined) {

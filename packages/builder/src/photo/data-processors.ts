@@ -1,25 +1,16 @@
 import type { Buffer } from 'node:buffer'
-import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import type { PhotoManifestItem, PickedExif, ToneAnalysis } from '@afilmory/typing'
-import { decompressUint8Array } from '@afilmory/utils'
 import type { Sharp } from 'sharp'
 
 import { HEIC_FORMATS } from '../constants/index.js'
 import { extractExifData } from '../image/exif.js'
 import { calculateHistogramAndAnalyzeTone } from '../image/histogram.js'
-import { generateThumbnailAndBlurhash, thumbnailExists } from '../image/thumbnail.js'
-import { workdir } from '../path.js'
+import { generateThumbnailAndBlurhash } from '../image/thumbnail.js'
 import { getPhotoExecutionContext } from './execution-context.js'
 import { getGlobalLoggers } from './logger-adapter.js'
 import type { PhotoProcessorOptions } from './processor.js'
-
-export interface ThumbnailResult {
-  thumbnailUrl: string
-  thumbnailBuffer: Buffer
-  thumbHash: Uint8Array | null
-}
 
 /**
  * 处理缩略图和 blurhash
@@ -27,55 +18,21 @@ export interface ThumbnailResult {
  */
 export async function processThumbnailAndBlurhash(
   imageBuffer: Buffer,
-  photoId: string,
-  existingItem: PhotoManifestItem | undefined,
+  originalBuffer: Buffer,
+  revision: string | undefined,
   options: PhotoProcessorOptions,
-): Promise<ThumbnailResult> {
-  const loggers = getGlobalLoggers()
+) {
   const { builder } = getPhotoExecutionContext()
-  const { limitInputPixels } = builder.getConfig().system.processing
-
-  // 检查是否可以复用现有数据
-  if (
-    !options.isForceMode
-    && !options.isForceThumbnails
-    && existingItem?.thumbHash
-    && (await thumbnailExists(photoId))
-  ) {
-    try {
-      const thumbnailPath = path.join(workdir, 'public/thumbnails', `${photoId}.jpg`)
-      const thumbnailBuffer = await fs.readFile(thumbnailPath)
-      const thumbnailUrl = `/thumbnails/${photoId}.jpg`
-
-      loggers.blurhash.info(`复用现有 blurhash: ${photoId}`)
-      loggers.thumbnail.info(`复用现有缩略图：${photoId}`)
-
-      return {
-        thumbnailUrl,
-        thumbnailBuffer,
-        thumbHash: decompressUint8Array(existingItem.thumbHash),
-      }
-    }
-    catch (error) {
-      loggers.thumbnail.warn(`读取现有缩略图失败，重新生成：${photoId}`, error)
-      // 继续执行生成逻辑
-    }
-  }
-
-  // 生成新的缩略图和 blurhash
-  const result = await generateThumbnailAndBlurhash(
+  const { limitInputPixels, thumbnails } = builder.getConfig().system.processing
+  return await generateThumbnailAndBlurhash(
+    originalBuffer,
     imageBuffer,
-    photoId,
+    thumbnails,
+    revision,
     options.isForceMode || options.isForceThumbnails,
     !options.dryRun,
     limitInputPixels,
   )
-
-  return {
-    thumbnailUrl: result.thumbnailUrl!,
-    thumbnailBuffer: result.thumbnailBuffer!,
-    thumbHash: result.thumbHash!,
-  }
 }
 
 /**

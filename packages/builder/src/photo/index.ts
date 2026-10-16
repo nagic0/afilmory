@@ -7,7 +7,7 @@ export type { CacheableData } from './cache-manager.js'
 export { shouldProcessPhoto } from './cache-manager.js'
 
 // 数据处理器
-export type { ThumbnailResult } from './data-processors.js'
+export type { GeneratedThumbnail } from '../image/thumbnail.js'
 export { processExifData, processThumbnailAndBlurhash, processToneAnalysis } from './data-processors.js'
 
 // Live Photo 处理

@@ -1,4 +1,5 @@
 import os from 'node:os'
+import process from 'node:process'
 
 import { defineBuilderConfig, githubRepoSyncPlugin } from '@afilmory/builder'
 
@@ -36,6 +37,10 @@ export default defineBuilderConfig(() => ({
       defaultConcurrency: 10,
       enableLivePhotoDetection: true,
       digestSuffixLength: 8,
+      thumbnails: {
+        mode: 'sdr', // 'jpeg-gainmap' | 'avif-gainmap' (experimental; see DEVELOPMENT.md)
+        width: 600,
+      },
       xmp: {
         keywords: true,
         regions: true,
