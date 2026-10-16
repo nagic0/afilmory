@@ -10,6 +10,7 @@
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -157,7 +158,10 @@ Image transform(Image src, const avifImage *metadata) {
   return src;
 }
 
-Image avifRendition(const avifImage *src, float headroom) {
+Image avifRendition(const avifImage *src, float headroom,
+                    avifColorPrimaries outputPrimaries = AVIF_COLOR_PRIMARIES_UNSPECIFIED) {
+  if (outputPrimaries == AVIF_COLOR_PRIMARIES_UNSPECIFIED)
+    outputPrimaries = src->colorPrimaries;
   avifRGBImage rgb;
   avifRGBImageSetDefaults(&rgb, src);
   rgb.format = AVIF_RGB_FORMAT_RGB;
@@ -167,13 +171,13 @@ Image avifRendition(const avifImage *src, float headroom) {
   rgb.pixels = reinterpret_cast<uint8_t *>(pixels.data());
   rgb.rowBytes = src->width * 6;
   avifDiagnostics diag{};
-  // Keep both renditions in the base gamut. libavif handles gain-map application
-  // in the signalled base/alternate colour space before converting the result.
-  check(avifImageApplyGainMap(src, src->gainMap, headroom, src->colorPrimaries,
+  // libavif applies the gain map in its signalled working space, then converts.
+  // Thumbnails retain the base gamut; analysis requests BT.2020 for HDR luminance.
+  check(avifImageApplyGainMap(src, src->gainMap, headroom, outputPrimaries,
                               headroom > 0 ? AVIF_TRANSFER_CHARACTERISTICS_PQ
                                            : AVIF_TRANSFER_CHARACTERISTICS_SRGB,
                               &rgb, nullptr, &diag));
-  Image result{src->width, src->height, src->colorPrimaries, {}};
+  Image result{src->width, src->height, outputPrimaries, {}};
   result.pixels.reserve(pixels.size());
   for (uint16_t v : pixels) {
     float f = headroom > 0 ? pqDecode(v / 65535.0f) : linear(v / 65535.0f);
@@ -183,8 +187,9 @@ Image avifRendition(const avifImage *src, float headroom) {
   }
   return transform(std::move(result), src);
 }
-std::pair<Image, Image> decodeAvif(const std::vector<uint8_t> &input, uint64_t limit,
-                                   bool &allowSdrFallback) {
+std::pair<Image, Image>
+decodeAvif(const std::vector<uint8_t> &input, uint64_t limit, bool &allowSdrFallback,
+           avifColorPrimaries hdrPrimaries = AVIF_COLOR_PRIMARIES_UNSPECIFIED) {
   auto decoder = std::unique_ptr<avifDecoder, decltype(&avifDecoderDestroy)>(avifDecoderCreate(),
                                                                              avifDecoderDestroy);
   if (!decoder)
@@ -224,8 +229,9 @@ std::pair<Image, Image> decodeAvif(const std::vector<uint8_t> &input, uint64_t l
     throw std::runtime_error("Invalid AVIF headroom");
   check(avifDecoderNextImage(decoder.get()));
   return {avifRendition(src, 0),
-          avifRendition(src, std::max(float(capacity.n) / capacity.d,
-                                      float(baseCapacity.n) / baseCapacity.d))};
+          avifRendition(
+              src, std::max(float(capacity.n) / capacity.d, float(baseCapacity.n) / baseCapacity.d),
+              hdrPrimaries)};
 }
 Image decodeJpeg(std::vector<uint8_t> &input, bool hdr, uint64_t limit, int orientation) {
   auto decoder = std::unique_ptr<uhdr_codec_private_t, decltype(&uhdr_release_decoder)>(
@@ -404,16 +410,35 @@ void encodeJpeg(const Image &sdr, const Image &hdr, int quality, int gainQuality
     throw std::runtime_error("Missing JPEG output");
   writeFile(output, encoded->data, encoded->data_sz);
 }
+#include "analysis.h"
 } // namespace
 
 int main(int argc, char **argv) {
   bool allowSdrFallback = true;
   try {
-    if (argc == 2 && std::string(argv[1]) == "--version") {
+    if (argc == 2 &&
+        (std::string(argv[1]) == "--version" || std::string(argv[1]) == "--analysis-version")) {
       char codecs[256];
       avifCodecVersions(codecs);
-      std::cout << "afilmory-hdr-thumbnail/1 " << CODEC_REVISION << " libavif/" << avifVersion()
-                << " libultrahdr/" << UHDR_LIB_VERSION_STR << ' ' << codecs << '\n';
+      const bool analysisVersion = std::string(argv[1]) == "--analysis-version";
+      std::cout << (analysisVersion ? "afilmory-image-analysis/1 " : "afilmory-hdr-thumbnail/1 ")
+                << CODEC_REVISION << (analysisVersion ? ANALYSIS_REVISION : "") << " libavif/"
+                << avifVersion() << " libultrahdr/" << UHDR_LIB_VERSION_STR << ' ' << codecs
+                << '\n';
+      return 0;
+    }
+    const bool analysis = argc == 6 && std::string(argv[1]) == "--analyze";
+    if (analysis) {
+      const uint64_t limit = std::stoull(argv[3]);
+      const int orientation = std::stoi(argv[4]);
+      if (!limit || orientation < 1 || orientation > 8 || std::string(argv[5]) != "v1")
+        throw std::runtime_error("Invalid analysis arguments");
+      std::ifstream stream(argv[2], std::ios::binary | std::ios::ate);
+      if (!stream || stream.tellg() > 512 * 1024 * 1024)
+        throw std::runtime_error("Cannot read analysis input or input exceeds 512 MiB");
+      stream.seekg(0);
+      std::vector<uint8_t> input((std::istreambuf_iterator<char>(stream)), {});
+      analyze(input, limit, orientation);
       return 0;
     }
     if (argc != 9)

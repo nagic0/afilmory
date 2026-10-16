@@ -2,6 +2,7 @@ import process from 'node:process'
 
 import type { AfilmoryManifest, CameraInfo, LensInfo, PhotoManifestItem, ProcessPhotoResult } from '@afilmory/typing'
 
+import { analysisIsCurrent } from '../image/analysis.js'
 import { getThumbnailRuntime, sourceRevision, thumbnailIsCurrent } from '../image/thumbnail-cache.js'
 import { logger } from '../logger/index.js'
 import { handleDeletedPhotos, loadExistingManifest, needsUpdate, saveManifest } from '../manifest/manager.js'
@@ -793,7 +794,10 @@ export class AfilmoryBuilder {
         ETag: obj.etag,
       }
 
-      if (needsUpdate(existingItem, legacyObj)) {
+      if (
+        needsUpdate(existingItem, legacyObj)
+        || !(await analysisIsCurrent(existingItem, this.config.system.processing.thumbnails))
+      ) {
         tasksToProcess.push(obj)
         continue
       }

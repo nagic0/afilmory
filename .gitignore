@@ -85,6 +85,7 @@ tmp-asc/
 acceptance-report/
 /metadata/
 **/.cache/thumbnails/
+**/.cache/analysis/
 .local/
 apps/mobile/metadata/
 apps/mobile/fastlane/metadata/

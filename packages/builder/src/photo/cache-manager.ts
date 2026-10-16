@@ -2,6 +2,7 @@ import type { Buffer } from 'node:buffer'
 
 import type { PhotoManifestItem } from '@afilmory/typing'
 
+import { analysisIsCurrent } from '../image/analysis.js'
 import { sourceRevision, thumbnailIsCurrent } from '../image/thumbnail-cache.js'
 import type { ThumbnailSettings } from '../types/config.js'
 import type { PhotoProcessorOptions } from './processor.js'
@@ -34,6 +35,10 @@ export async function shouldProcessPhoto(
   // 新照片总是需要处理
   if (!existingItem) {
     return { shouldProcess: true, reason: '新照片' }
+  }
+
+  if (!(await analysisIsCurrent(existingItem, settings))) {
+    return { shouldProcess: true, reason: '更新原图色彩与亮度分析' }
   }
 
   // 检查文件是否更新

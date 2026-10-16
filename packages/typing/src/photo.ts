@@ -107,9 +107,37 @@ export interface ThumbnailCacheInfo {
   fileName: string
 }
 
+export interface ImageColorInfo {
+  source: 'avif-nclx' | 'icc' | 'jpeg-gainmap' | 'decoder'
+  primaries?: number
+  transfer?: number
+  bitDepth: number
+}
+
+export interface PhotoAnalysis {
+  recipe: string
+  sourceDigest: string
+  color: ImageColorInfo
+  alternateColor?: ImageColorInfo
+  sdr?: HistogramData
+  hdr?: {
+    bins: number[]
+    minStops: number
+    maxStops: number
+    pixelCount: number
+    aboveWhiteRatio: number
+    peak: number
+    p99: number
+    p999: number
+    declaredHeadroom: number
+  }
+  status: 'complete' | 'sdr-only' | 'unavailable'
+}
+
 export interface PhotoManifestItem extends PhotoInfo {
   /** Builder cache identity; the viewer uses thumbnailUrl. */
   thumbnailCache?: ThumbnailCacheInfo
+  analysis?: PhotoAnalysis
   id: string
   originalUrl: string
   format: string

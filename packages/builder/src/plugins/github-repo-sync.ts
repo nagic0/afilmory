@@ -118,16 +118,21 @@ async function prepareRepositoryLayout({ assetsGitDir, logger }: PrepareReposito
   const manifestSourcePath = path.resolve(assetsGitDir, 'photos-manifest.json')
   // Variants are build cache, not public website assets. Keep them across CI
   // checkouts so a mode switch can reuse earlier encodings.
-  const cacheSourceDir = path.resolve(assetsGitDir, 'thumbnail-cache')
-  const cacheDir = path.resolve(workdir, '.cache/thumbnails')
-  await fs.mkdir(cacheSourceDir, { recursive: true })
-  await fs.mkdir(path.dirname(cacheDir), { recursive: true })
-  const cacheStat = await fs.lstat(cacheDir).catch(() => null)
-  if (cacheStat && !cacheStat.isSymbolicLink()) {
-    await fs.cp(cacheDir, cacheSourceDir, { recursive: true, force: false })
+  for (const [source, destination] of [
+    ['thumbnail-cache', 'thumbnails'],
+    ['analysis-cache', 'analysis'],
+  ]) {
+    const cacheSourceDir = path.resolve(assetsGitDir, source)
+    const cacheDir = path.resolve(workdir, '.cache', destination)
+    await fs.mkdir(cacheSourceDir, { recursive: true })
+    await fs.mkdir(path.dirname(cacheDir), { recursive: true })
+    const cacheStat = await fs.lstat(cacheDir).catch(() => null)
+    if (cacheStat && !cacheStat.isSymbolicLink()) {
+      await fs.cp(cacheDir, cacheSourceDir, { recursive: true, force: false })
+    }
+    await fs.rm(cacheDir, { recursive: true, force: true })
+    await fs.symlink(cacheSourceDir, cacheDir, 'dir')
   }
-  await fs.rm(cacheDir, { recursive: true, force: true })
-  await fs.symlink(cacheSourceDir, cacheDir, 'dir')
 
   if (!existsSync(thumbnailsSourceDir)) {
     logger.main.info('📁 创建 thumbnails 目录...')

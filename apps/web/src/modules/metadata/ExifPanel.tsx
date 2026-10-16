@@ -22,6 +22,7 @@ import {
 import { convertExifGPSToDecimal } from '~/lib/map-utils'
 import { getRenderablePhotoRegions } from '~/modules/viewer/photo-region-bounds'
 
+import { ColorInformation } from './ColorInformation'
 import { ExifRowGroup, ExifSection } from './ExifSection'
 import { formatExifData, Row } from './formatExifData'
 import { HistogramChart } from './HistogramChart'
@@ -175,9 +176,7 @@ export const ExifPanelContent: FC<ExifPanelContentProps> = ({
             <Row label={t('exif.dimensions')} value={`${currentPhoto.width} × ${currentPhoto.height}`} />
             <Row label={t('exif.file.size')} value={`${(currentPhoto.size / 1024 / 1024).toFixed(1)}MB`} />
             {megaPixels && <Row label={t('exif.pixels')} value={`${megaPixels} MP`} />}
-            {formattedExifData?.colorSpace && (
-              <Row label={t('exif.color.space')} value={formattedExifData.colorSpace} />
-            )}
+            <ColorInformation analysis={currentPhoto.analysis} exifColor={formattedExifData?.colorSpace} />
             {formattedExifData?.rating && formattedExifData.rating > 0 ? (
               <Row label={t('exif.rating')} value={'★'.repeat(formattedExifData.rating)} />
             ) : null}
@@ -266,6 +265,7 @@ export const ExifPanelContent: FC<ExifPanelContentProps> = ({
 
         {currentPhoto.toneAnalysis && (
           <ExifSection title={t('exif.tone.analysis.title')}>
+            <p className="text-text-secondary mb-2 text-xs">{t('exif.analysis.tone.scope')}</p>
             <ExifRowGroup>
               <Row
                 label={t('exif.tone.type')}
@@ -295,9 +295,9 @@ export const ExifPanelContent: FC<ExifPanelContentProps> = ({
           </ExifSection>
         )}
 
-        {currentPhoto.toneAnalysis && (
+        {currentPhoto.analysis && (
           <ExifSection title={t('exif.histogram')}>
-            <HistogramChart thumbnailUrl={currentPhoto.thumbnailUrl} />
+            <HistogramChart key={currentPhoto.id} analysis={currentPhoto.analysis} />
           </ExifSection>
         )}
 

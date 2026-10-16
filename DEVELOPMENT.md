@@ -235,6 +235,60 @@ SDR/HDR luminance bands and no photographs.
 Native tests are skipped explicitly
 when `AFILMORY_HDR_TEST_ENCODER` is unset.
 
+## Original-image color and luminance analysis
+
+The inspector uses build-time `analysis` data in the photo manifest. It does not
+download a thumbnail or read a browser canvas to calculate histograms. The native
+codec above is also required for JPEG/AVIF analysis, including when thumbnails
+use SDR mode. Rebuild it after updating the analysis code.
+
+For supported JPEG and AVIF gain-map originals, analysis reconstructs both
+renditions at full resolution, before resizing. AVIF uses libavif and JPEG uses
+libultrahdr. AVIF HDR reconstruction requests BT.2020 to avoid clipping to the
+base image's narrower gamut before calculating luminance. Supported transforms
+are applied before counting pixels.
+
+- Color fields report the base image's declared CICP gamut, transfer and bit
+  depth, with alternate-rendition color information when present. ICC sources
+  are identified as ICC; their gamut/transfer are not inferred from an EXIF
+  `Uncalibrated` label. The original EXIF label is shown separately.
+- SDR RGB histograms and tone metrics use the original SDR rendition converted
+  to sRGB, clipped to its range and quantized to 256 encoded-value bins. These
+  metrics do not describe HDR highlights. The luminance channel is the existing
+  weighted encoded-sRGB tone metric, not linear-light HDR luminance.
+- HDR statistics use reconstructed linear-light luminance relative to SDR white
+  (`1×`). The 256 histogram bins are uniformly spaced in exposure stops, from
+  −12 EV to at least +3 EV, extending to the pixel peak when necessary. Black
+  and values below the lower limit occupy the first bin. The axis marks
+  `1×`, `2×`, `4×` and `8×`; this is not an absolute-nits scale.
+- Above-white ratio counts pixels with luminance strictly greater than `1×`.
+  P99 and P99.9 use the nearest-rank percentile of all reconstructed pixels;
+  peak is their maximum. Encoding noise around `1×` can affect the ratio.
+- Declared HDR headroom comes from gain-map metadata and is displayed separately
+  from measured pixel values. Neither is a measurement of screen brightness.
+
+Ordinary SDR sources have no HDR metrics. HDR-only PQ/HLG AVIF, SDR-base ICC gain
+maps, gain maps with alpha, and other unsupported native structures show unavailable
+analysis rather than fabricated HDR values. A missing native executable likewise
+leaves JPEG/AVIF analysis unavailable. Corrupt input or a failing/incompatible
+executable remains a build error, as does an ICC HDR base that the shared decoder
+cannot safely reconstruct. This analysis support is independent of the
+browser GPU viewer's support matrix.
+
+Analysis is cached by original SHA-256 and analysis/decoder versions in
+`apps/web/.cache/analysis`. Thumbnail mode, width and quality are not part of
+this recipe. A first build backfills existing photos; unchanged originals then
+reuse their analysis, including when thumbnail settings change. Updating the
+analysis implementation invalidates analysis without invalidating thumbnail
+variants unless shared decoding code also changed. `githubRepoSyncPlugin`
+preserves this private cache in `analysis-cache/`; do not publish the cache as
+website content. Force-manifest/full-force builds refresh analysis.
+
+```sh
+AFILMORY_HDR_TEST_ENCODER="$PWD/.local/hdr-native/afilmory-hdr-thumbnail" \
+  node --import tsx --test packages/builder/src/image/analysis.test.ts
+```
+
 ## Site Presentation Config (`config.json`)
 
 `config.json` merges into `site.config.ts` for both SPA and SSR:

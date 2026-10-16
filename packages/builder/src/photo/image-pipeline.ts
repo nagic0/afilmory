@@ -8,7 +8,9 @@ import type { Sharp } from 'sharp'
 import sharp from 'sharp'
 
 import type { BuilderOptions } from '../builder/builder.js'
+import { analysisIsCurrent, analyzeOriginal } from '../image/analysis.js'
 import { extractXmpMetadataFromExif } from '../image/exif.js'
+import { analyzeTone } from '../image/histogram.js'
 import {
   convertBmpToJpegSharpInstance,
   getImageMetadataWithSharp,
@@ -21,7 +23,7 @@ import type { PluginRunState } from '../plugins/manager.js'
 import { THUMBNAIL_PLUGIN_DATA_KEY } from '../plugins/thumbnail-storage/shared.js'
 import type { S3ObjectLike } from '../types/s3.js'
 import { shouldProcessPhoto } from './cache-manager.js'
-import { processExifData, processThumbnailAndBlurhash, processToneAnalysis } from './data-processors.js'
+import { processExifData, processThumbnailAndBlurhash } from './data-processors.js'
 import { getPhotoExecutionContext } from './execution-context.js'
 import { detectGainMap } from './gainmap-detector.js'
 import { extractPhotoInfo } from './info-extractor.js'
@@ -177,6 +179,7 @@ export async function executePhotoProcessingPipeline(
     // downloading the original or re-running EXIF, motion-photo and tone analysis.
     if (
       existingItem?.thumbnailCache
+      && (await analysisIsCurrent(existingItem, builder.getConfig().system.processing.thumbnails))
       && revision
       && revision === existingItem.thumbnailCache.sourceRevision
       && !options.isForceMode
@@ -226,7 +229,7 @@ export async function executePhotoProcessingPipeline(
       return null
     }
 
-    const { sharpInstance, imageBuffer, metadata } = processedData
+    const { imageBuffer, metadata } = processedData
     const contentDigest = crypto.createHash('sha256').update(imageBuffer).digest('hex')
 
     // 3. 处理缩略图和 blurhash
@@ -272,7 +275,25 @@ export async function executePhotoProcessingPipeline(
     }
 
     // 8. 处理影调分析
-    const toneAnalysis = await processToneAnalysis(sharpInstance, photoKey, reusableItem, options)
+    const processing = builder.getConfig().system.processing
+    const analysis
+      = reusableItem
+        && !options.isForceManifest
+        && !options.isForceMode
+        && (await analysisIsCurrent(reusableItem, processing.thumbnails))
+        ? reusableItem.analysis!
+        : await analyzeOriginal(
+            imageData.rawBuffer,
+            imageBuffer,
+            processing.thumbnails,
+            processing.limitInputPixels,
+            options.isForceManifest || options.isForceMode,
+            !options.dryRun,
+          )
+    if (analysis.status === 'unavailable') {
+      loggers.tone.warn(`Original SDR/HDR analysis unavailable: ${photoKey}`)
+    }
+    const toneAnalysis = analysis.sdr ? analyzeTone(analysis.sdr) : null
 
     // 9. 提取照片信息
     const photoInfo = extractPhotoInfo(photoKey, exifData)
@@ -290,6 +311,7 @@ export async function executePhotoProcessingPipeline(
       originalUrl: await storageManager.generatePublicUrl(photoKey),
       thumbnailUrl: thumbnailResult.thumbnailUrl,
       thumbnailCache: thumbnailResult.cache,
+      analysis,
       thumbHash: thumbnailResult.thumbHash ? compressUint8Array(thumbnailResult.thumbHash) : null,
       width: metadata.width,
       height: metadata.height,
@@ -323,7 +345,8 @@ export async function executePhotoProcessingPipeline(
       isHDR:
         exifData?.MPImageType === 'Gain Map Image'
         || exifData?.UniformResourceName === 'urn:iso:std:iso:ts:21496:-1'
-        || hasGainMap,
+        || hasGainMap
+        || !!analysis.hdr,
     }
 
     loggers.image.success(`✅ 处理完成：${photoKey}`)

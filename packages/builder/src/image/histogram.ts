@@ -61,7 +61,7 @@ async function calculateHistogram(sharpInstance: Sharp): Promise<HistogramData |
   }
 }
 
-function analyzeTone(histogram: HistogramData): ToneAnalysis {
+export function analyzeTone(histogram: HistogramData): ToneAnalysis {
   const log = getGlobalLoggers().image
 
   try {
