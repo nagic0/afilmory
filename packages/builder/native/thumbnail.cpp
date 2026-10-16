@@ -167,9 +167,10 @@ Image avifRendition(const avifImage *src, float headroom,
   rgb.format = AVIF_RGB_FORMAT_RGB;
   rgb.depth = 16;
   rgb.isFloat = AVIF_FALSE;
-  std::vector<uint16_t> pixels(size_t(src->width) * src->height * 3);
-  rgb.pixels = reinterpret_cast<uint8_t *>(pixels.data());
-  rgb.rowBytes = src->width * 6;
+  // ApplyGainMap allocates/replaces the output buffer. Its allocation must not
+  // be owned by a C++ vector, even when the allocator happens to reuse an address.
+  auto pixels = std::unique_ptr<avifRGBImage, decltype(&avifRGBImageFreePixels)>(
+      &rgb, avifRGBImageFreePixels);
   avifDiagnostics diag{};
   // libavif applies the gain map in its signalled working space, then converts.
   // Thumbnails retain the base gamut; analysis requests BT.2020 for HDR luminance.
@@ -178,12 +179,16 @@ Image avifRendition(const avifImage *src, float headroom,
                                            : AVIF_TRANSFER_CHARACTERISTICS_SRGB,
                               &rgb, nullptr, &diag));
   Image result{src->width, src->height, outputPrimaries, {}};
-  result.pixels.reserve(pixels.size());
-  for (uint16_t v : pixels) {
-    float f = headroom > 0 ? pqDecode(v / 65535.0f) : linear(v / 65535.0f);
-    if (!std::isfinite(f))
-      throw std::runtime_error("Non-finite AVIF rendition");
-    result.pixels.push_back(std::max(0.0f, f));
+  result.pixels.reserve(size_t(rgb.width) * rgb.height * 3);
+  for (uint32_t y = 0; y < rgb.height; ++y) {
+    const auto *row = reinterpret_cast<const uint16_t *>(rgb.pixels + size_t(y) * rgb.rowBytes);
+    for (size_t x = 0; x < size_t(rgb.width) * 3; ++x) {
+      const float v = row[x] / 65535.0f;
+      const float f = headroom > 0 ? pqDecode(v) : linear(v);
+      if (!std::isfinite(f))
+        throw std::runtime_error("Non-finite AVIF rendition");
+      result.pixels.push_back(std::max(0.0f, f));
+    }
   }
   return transform(std::move(result), src);
 }

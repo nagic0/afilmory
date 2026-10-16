@@ -228,6 +228,12 @@ AFILMORY_HDR_TEST_ENCODER="$PWD/.local/hdr-native/afilmory-hdr-thumbnail" \
 ```
 
 The native tests additionally require `ultrahdr_app` and `avifgainmaputil` on PATH.
+For memory ownership checks, build a separate native executable with
+`-DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"` and
+`-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address`. Run the same thumbnail and analysis
+tests with that executable and `ASAN_OPTIONS=alloc_dealloc_mismatch=1`.
+In particular, libavif's gain-map application allocates its output pixels; release
+that storage with `avifRGBImageFreePixels`, never a C++ container destructor.
 The small synthetic fixtures can be regenerated with
 `python3 packages/builder/native/generate-fixtures.py`.
 They contain four known
