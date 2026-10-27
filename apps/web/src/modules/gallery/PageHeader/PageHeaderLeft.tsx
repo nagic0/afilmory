@@ -1,4 +1,6 @@
+import { clsxm, focusRing } from '@afilmory/utils'
 import * as AvatarPrimitive from '@radix-ui/react-avatar'
+import { useTranslation } from 'react-i18next'
 
 import { siteConfig } from '~/config'
 import { usePhotos } from '~/hooks/usePhotoViewer'
@@ -6,14 +8,15 @@ import { usePhotos } from '~/hooks/usePhotoViewer'
 import { resolveSocialUrl, SocialIconButton } from './utils'
 
 export const PageHeaderLeft = () => {
+  const { t } = useTranslation()
   const visiblePhotoCount = usePhotos().length
 
-  const githubUrl =
-    siteConfig.social && siteConfig.social.github
+  const githubUrl
+    = siteConfig.social && siteConfig.social.github
       ? resolveSocialUrl(siteConfig.social.github, { baseUrl: 'https://github.com/' })
       : undefined
-  const twitterUrl =
-    siteConfig.social && siteConfig.social.twitter
+  const twitterUrl
+    = siteConfig.social && siteConfig.social.twitter
       ? resolveSocialUrl(siteConfig.social.twitter, { baseUrl: 'https://twitter.com/', stripAt: true })
       : undefined
   const hasRss = true
@@ -42,6 +45,20 @@ export const PageHeaderLeft = () => {
         <h1 className="truncate text-sm font-semibold text-white lg:text-base">{siteConfig.name}</h1>
         <span className="text-xs text-white/40 lg:text-sm">{visiblePhotoCount}</span>
       </div>
+      {siteConfig.author.url && (
+        <a
+          href={siteConfig.author.url}
+          aria-label={t('gallery.homepage', { defaultValue: 'Homepage' })}
+          title={t('gallery.homepage', { defaultValue: 'Homepage' })}
+          className={clsxm(
+            'text-text-secondary hover:bg-fill-tertiary hover:text-text flex min-h-8 min-w-8 items-center justify-center gap-1.5 rounded-lg px-1 text-xs transition-colors duration-200 lg:px-2',
+            focusRing,
+          )}
+        >
+          <i className="i-mingcute-home-4-line text-base" aria-hidden="true" />
+          <span className="hidden lg:inline">{t('gallery.homepage', { defaultValue: 'Homepage' })}</span>
+        </a>
+      )}
       {(githubUrl || twitterUrl || hasRss) && (
         <div className="ml-1 hidden items-center gap-1 border-l border-white/10 pl-2 lg:flex">
           {githubUrl && <SocialIconButton icon="i-mingcute-github-fill" title="GitHub" href={githubUrl} />}

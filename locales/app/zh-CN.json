@@ -389,6 +389,7 @@
   "gallery.filter.clearAll": "清除全部",
   "gallery.filter.edit": "编辑筛选",
   "gallery.filter.results": "显示 {{count}} 张照片",
+  "gallery.homepage": "主页",
   "gallery.photos_one": "{{count}} 张照片",
   "gallery.photos_other": "{{count}} 张照片",
   "gallery.search": "搜索",

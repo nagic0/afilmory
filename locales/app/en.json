@@ -389,6 +389,7 @@
   "gallery.filter.clearAll": "Clear All",
   "gallery.filter.edit": "Edit Filters",
   "gallery.filter.results": "Showing {{count}} photos",
+  "gallery.homepage": "Homepage",
   "gallery.photos_one": "{{count}} photo",
   "gallery.photos_other": "{{count}} photos",
   "gallery.search": "Search",
